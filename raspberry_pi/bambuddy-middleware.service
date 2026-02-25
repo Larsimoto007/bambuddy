@@ -1,0 +1,36 @@
+[Unit]
+Description=Bambuddy Middleware - 3D Printer Bridge
+Documentation=https://github.com/Larsimoto007/bambuddy
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory (where the Python files are)
+WorkingDirectory=/opt/bambuddy-middleware
+
+# Main command
+ExecStart=/usr/bin/python3 /opt/bambuddy-middleware/bambuddy_middleware.py --config /etc/bambuddy-middleware/config.json
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bambuddy-middleware
+
+# Security (optional hardening)
+ProtectSystem=false
+ProtectHome=true
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target
