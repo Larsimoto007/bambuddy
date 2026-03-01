@@ -207,9 +207,10 @@ class SimpleMQTTServer:
         self._prepare_percent = "0"
 
         # External status provider (used by middleware mode for real printer data)
+        # Returns dict with "print" key containing BambuLab-format status
         self._status_provider: Callable[[], dict] | None = None
 
-        # External MQTT command callback (used by middleware mode)
+        # External MQTT command callback (used by middleware mode, may be async)
         self.on_mqtt_command: Callable[[dict], None] | None = None
 
     def set_status_provider(self, provider: Callable[[], dict]) -> None:
