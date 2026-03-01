@@ -98,9 +98,11 @@ Perfect for remote print farms, traveling makers, or accessing your home printer
 - CSV/Excel export
 
 ### ⏰ Scheduling & Automation
+- **Background print dispatch** — FTP uploads and print-start commands run in the background with real-time WebSocket progress toasts (per-job upload bars, status badges, cancel button)
 - Print queue with drag-and-drop
 - Multi-printer selection (send to multiple printers at once)
 - Model-based queue assignment (send to "any X1C" for load balancing) with location filtering
+- Filament override for model-based queue (swap filament colors/types before scheduling)
 - Filament validation (only assign to printers with required filaments)
 - Per-printer AMS mapping (individual slot configuration for print farms)
 - Scheduled prints (date/time)
@@ -154,6 +156,8 @@ Perfect for remote print farms, traveling makers, or accessing your home printer
 - Built-in spool inventory with AMS slot assignment, usage tracking, and remaining weight management
 - Automatic filament consumption tracking: 3MF slicer estimates for all spools (primary), AMS remain% delta as fallback
 - Per-layer gcode accuracy for partial prints (failed/cancelled), with linear scaling fallback
+- **Per-spool cost tracking** — Set cost/kg on each spool; costs are automatically calculated at print completion and aggregated to archives. Print modal shows real-time cost preview. Configurable default cost and currency in Settings.
+- **Bulk spool addition** — Add multiple identical spools at once (quantity 1–100) with a single form submission. Quick Add mode for stock spools that only need material, color, and weight.
 - Spool catalog, color catalog, PA profile matching, and low-stock alerts
 
 ### 🔧 Integrations
@@ -354,6 +358,7 @@ Perfect for remote print farms, traveling makers, or accessing your home printer
 ### Requirements
 - Python 3.10+ (3.11/3.12 recommended)
 - Bambu Lab printer with **Developer Mode** enabled (see below)
+- **"Store sent files on external storage"** enabled in Bambu Studio/OrcaSlicer
 - Same local network as printer
 
 ### Installation
@@ -411,6 +416,21 @@ docker compose pull && docker compose up -d
 # From source: rebuild after pulling changes
 cd bambuddy && git pull && docker compose up -d --build
 ```
+
+**Daily Beta Builds:**
+
+Beta builds with the latest fixes are pushed regularly to the same beta version tag:
+
+```bash
+# Pull the current beta
+docker pull ghcr.io/maziggy/bambuddy:0.2.2b1
+# or from Docker Hub
+docker pull maziggy/bambuddy:0.2.2b1
+```
+
+Use [Watchtower](https://containrrr.dev/watchtower/) to automatically update when new daily builds are pushed.
+
+> **Note:** Beta builds use version tags like `0.2.2b1` — they are never tagged as `latest`. Your stable installation won't auto-update to a beta unless you explicitly pull a beta tag.
 
 **Useful Commands:**
 
@@ -520,6 +540,14 @@ Developer Mode allows third-party software like Bambuddy to control your printer
 5. Find Serial Number in device info
 
 > **Note:** Developer Mode disables cloud features but provides full local control. Standard LAN Mode (without Developer Mode) only allows read-only monitoring.
+
+### Slicer Settings
+
+In Bambu Studio or OrcaSlicer, enable **"Store sent files on external storage"** so that print files (3MF) are saved to the printer's SD card. Bambuddy needs these files to extract thumbnails and 3D model previews.
+
+1. Open **Bambu Studio** or **OrcaSlicer**
+2. Go to the **Device** tab for your printer
+3. In **Print Options**, enable **Store Sent Files on External Storage**
 
 ---
 

@@ -31,6 +31,7 @@ CHAMBER_TEMP_SUPPORTED_MODELS = frozenset(
         "C13",  # X1E
         "O1D",  # H2D
         "O1C",  # H2C
+        "O1C2",  # H2C (dual nozzle variant)
         "O1S",  # H2S
         "O1E",  # H2D Pro
         "O2D",  # H2D Pro (alternate code)
@@ -695,8 +696,8 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
         ],
     }
     # Add cover URL if there's an active print and printer_id is provided
-    # Include PAUSE/PAUSED states so skip objects modal can show cover
-    if printer_id and state.state in ("RUNNING", "PAUSE", "PAUSED") and state.gcode_file:
+    # Include PAUSE state so skip objects modal can show cover
+    if printer_id and state.state in ("RUNNING", "PAUSE") and state.gcode_file:
         result["cover_url"] = f"/api/v1/printers/{printer_id}/cover"
     else:
         result["cover_url"] = None
