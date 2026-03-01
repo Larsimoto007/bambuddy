@@ -620,10 +620,10 @@ async def update_virtual_printer_settings(
     # "review" is the new name for "queue" (pending review before archiving)
     # "print_queue" archives and adds to print queue (unassigned)
     # "proxy" is transparent TCP proxy to a real printer
-    if new_mode not in ("immediate", "queue", "review", "print_queue", "proxy"):
+    if new_mode not in ("immediate", "queue", "review", "print_queue", "proxy", "middleware"):
         return JSONResponse(
             status_code=400,
-            content={"detail": "Mode must be 'immediate', 'review', 'print_queue', or 'proxy'"},
+            content={"detail": "Mode must be 'immediate', 'review', 'print_queue', 'proxy', or 'middleware'"},
         )
     # Normalize legacy "queue" to "review" for storage
     if new_mode == "queue":

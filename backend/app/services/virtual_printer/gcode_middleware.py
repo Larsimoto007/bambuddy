@@ -65,17 +65,20 @@ class GCodeMiddleware:
         self,
         serial_port: str = "/dev/ttyUSB0",
         baudrate: int = 115200,
+        upload_dir: Path | None = None,
     ):
         """Initialize the G-code middleware.
 
         Args:
             serial_port: Serial port for the physical printer
             baudrate: Baud rate for serial communication
+            upload_dir: Directory where uploaded files are stored
         """
         self._serial = SerialConnection(
             port=serial_port,
             baudrate=baudrate,
         )
+        self._upload_dir = upload_dir
 
         self._running = False
         self._poll_task: asyncio.Task | None = None
@@ -555,9 +558,12 @@ class GCodeMiddleware:
         logger.info("Preparing to print: %s", filename)
 
         # Find the file in upload directory
-        from backend.app.core.config import settings as app_settings
+        if self._upload_dir:
+            upload_dir = self._upload_dir
+        else:
+            from backend.app.core.config import settings as app_settings
 
-        upload_dir = app_settings.base_dir / "virtual_printer" / "uploads"
+            upload_dir = app_settings.base_dir / "virtual_printer" / "uploads"
 
         file_path = upload_dir / filename
         if not file_path.exists():

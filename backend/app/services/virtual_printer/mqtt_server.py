@@ -206,6 +206,20 @@ class SimpleMQTTServer:
         self._current_file = ""
         self._prepare_percent = "0"
 
+        # External status provider (used by middleware mode for real printer data)
+        self._status_provider: Callable[[], dict] | None = None
+
+        # External MQTT command callback (used by middleware mode)
+        self.on_mqtt_command: Callable[[dict], None] | None = None
+
+    def set_status_provider(self, provider: Callable[[], dict]) -> None:
+        """Set a callable that provides current status data.
+
+        When set, _send_status_report uses this instead of static state.
+        Used by middleware mode to provide real-time printer data.
+        """
+        self._status_provider = provider
+
     async def start(self) -> None:
         """Start the MQTT server."""
         if self._running:
@@ -541,78 +555,85 @@ class SimpleMQTTServer:
         try:
             # Build status message matching Bambu printer format
             self._sequence_id += 1
-            status = {
-                "print": {
-                    "sequence_id": str(self._sequence_id),
-                    "command": "push_status",
-                    "msg": 0,
-                    "gcode_state": self._gcode_state,
-                    "gcode_file": self._current_file,
-                    "gcode_file_prepare_percent": self._prepare_percent,
-                    "subtask_name": self._current_file.replace(".3mf", "") if self._current_file else "",
-                    "mc_print_stage": "",
-                    "mc_percent": 0,
-                    "mc_remaining_time": 0,
-                    "wifi_signal": "-44dBm",
-                    "print_error": 0,
-                    "print_type": "",
-                    "bed_temper": 25.0,
-                    "bed_target_temper": 0.0,
-                    "nozzle_temper": 25.0,
-                    "nozzle_target_temper": 0.0,
-                    "chamber_temper": 25.0,
-                    "cooling_fan_speed": "0",
-                    "big_fan1_speed": "0",
-                    "big_fan2_speed": "0",
-                    "heatbreak_fan_speed": "0",
-                    "spd_lvl": 1,
-                    "spd_mag": 100,
-                    "stg": [],
-                    "stg_cur": 0,
-                    "layer_num": 0,
-                    "total_layer_num": 0,
-                    "home_flag": 256,  # Bit 8 = SD card present (HAS_SDCARD_NORMAL)
-                    "hw_switch_state": 0,
-                    "online": {"ahb": False, "rfid": False, "version": 7},
-                    "ams_status": 0,
-                    "sdcard": True,
-                    "storage": {"free": 1000000000, "total": 32000000000},
-                    "upgrade_state": {
-                        "sequence_id": 0,
-                        "progress": "",
-                        "status": "",
-                        "consistency_request": False,
-                        "dis_state": 0,
-                        "err_code": 0,
-                        "force_upgrade": False,
-                        "message": "",
-                        "module": "",
-                        "new_version_state": 2,
-                        "new_ver_list": [],
-                        "ota_new_version_number": "",
-                        "ahb_new_version_number": "",
-                    },
-                    "ipcam": {
-                        "ipcam_dev": "1",
-                        "ipcam_record": "enable",
-                        "timelapse": "disable",
-                        "resolution": "1080p",
-                        "mode_bits": 0,
-                    },
-                    "xcam": {
-                        "allow_skip_parts": False,
-                        "buildplate_marker_detector": True,
-                        "first_layer_inspector": True,
-                        "halt_print_sensitivity": "medium",
-                        "print_halt": True,
-                        "printing_monitor": True,
-                        "spaghetti_detector": True,
-                    },
-                    "lights_report": [{"node": "chamber_light", "mode": "on"}],
-                    "nozzle_diameter": "0.4",
-                    "nozzle_type": "hardened_steel",
+
+            # Use external status provider if available (middleware mode)
+            if self._status_provider:
+                status = self._status_provider()
+                if "print" in status:
+                    status["print"]["sequence_id"] = str(self._sequence_id)
+            else:
+                status = {
+                    "print": {
+                        "sequence_id": str(self._sequence_id),
+                        "command": "push_status",
+                        "msg": 0,
+                        "gcode_state": self._gcode_state,
+                        "gcode_file": self._current_file,
+                        "gcode_file_prepare_percent": self._prepare_percent,
+                        "subtask_name": self._current_file.replace(".3mf", "") if self._current_file else "",
+                        "mc_print_stage": "",
+                        "mc_percent": 0,
+                        "mc_remaining_time": 0,
+                        "wifi_signal": "-44dBm",
+                        "print_error": 0,
+                        "print_type": "",
+                        "bed_temper": 25.0,
+                        "bed_target_temper": 0.0,
+                        "nozzle_temper": 25.0,
+                        "nozzle_target_temper": 0.0,
+                        "chamber_temper": 25.0,
+                        "cooling_fan_speed": "0",
+                        "big_fan1_speed": "0",
+                        "big_fan2_speed": "0",
+                        "heatbreak_fan_speed": "0",
+                        "spd_lvl": 1,
+                        "spd_mag": 100,
+                        "stg": [],
+                        "stg_cur": 0,
+                        "layer_num": 0,
+                        "total_layer_num": 0,
+                        "home_flag": 256,  # Bit 8 = SD card present (HAS_SDCARD_NORMAL)
+                        "hw_switch_state": 0,
+                        "online": {"ahb": False, "rfid": False, "version": 7},
+                        "ams_status": 0,
+                        "sdcard": True,
+                        "storage": {"free": 1000000000, "total": 32000000000},
+                        "upgrade_state": {
+                            "sequence_id": 0,
+                            "progress": "",
+                            "status": "",
+                            "consistency_request": False,
+                            "dis_state": 0,
+                            "err_code": 0,
+                            "force_upgrade": False,
+                            "message": "",
+                            "module": "",
+                            "new_version_state": 2,
+                            "new_ver_list": [],
+                            "ota_new_version_number": "",
+                            "ahb_new_version_number": "",
+                        },
+                        "ipcam": {
+                            "ipcam_dev": "1",
+                            "ipcam_record": "enable",
+                            "timelapse": "disable",
+                            "resolution": "1080p",
+                            "mode_bits": 0,
+                        },
+                        "xcam": {
+                            "allow_skip_parts": False,
+                            "buildplate_marker_detector": True,
+                            "first_layer_inspector": True,
+                            "halt_print_sensitivity": "medium",
+                            "print_halt": True,
+                            "printing_monitor": True,
+                            "spaghetti_detector": True,
+                        },
+                        "lights_report": [{"node": "chamber_light", "mode": "on"}],
+                        "nozzle_diameter": "0.4",
+                        "nozzle_type": "hardened_steel",
+                    }
                 }
-            }
 
             await self._publish_to_report(writer, status, self.serial)
 
@@ -822,6 +843,15 @@ class SimpleMQTTServer:
 
                             if self.on_print_command:
                                 await self._notify_print_command(filename, print_data)
+
+                    # Forward all MQTT commands to middleware (if connected)
+                    if self.on_mqtt_command:
+                        try:
+                            result = self.on_mqtt_command(data)
+                            if asyncio.iscoroutine(result):
+                                await result
+                        except Exception as e:
+                            logger.error("MQTT command callback error: %s", e)
 
                 except json.JSONDecodeError:
                     pass  # Non-JSON payloads on request topic are safely ignored

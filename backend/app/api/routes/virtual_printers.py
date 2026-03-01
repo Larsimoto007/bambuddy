@@ -25,6 +25,8 @@ class VirtualPrinterCreate(BaseModel):
     target_printer_id: int | None = None
     bind_ip: str | None = None
     remote_interface_ip: str | None = None
+    serial_port: str | None = None
+    baudrate: int | None = None
 
 
 class VirtualPrinterUpdate(BaseModel):
@@ -36,6 +38,8 @@ class VirtualPrinterUpdate(BaseModel):
     target_printer_id: int | None = None
     bind_ip: str | None = None
     remote_interface_ip: str | None = None
+    serial_port: str | None = None
+    baudrate: int | None = None
 
 
 def _vp_to_dict(vp, status: dict | None = None) -> dict:
@@ -58,6 +62,8 @@ def _vp_to_dict(vp, status: dict | None = None) -> dict:
         "target_printer_id": vp.target_printer_id,
         "bind_ip": vp.bind_ip,
         "remote_interface_ip": vp.remote_interface_ip,
+        "serial_port": vp.serial_port,
+        "baudrate": vp.baudrate,
         "position": vp.position,
         "status": status or {"running": False, "pending_files": 0},
     }
@@ -99,7 +105,7 @@ async def create_virtual_printer(
     from backend.app.services.virtual_printer.manager import DEFAULT_VIRTUAL_PRINTER_MODEL
 
     # Validate mode
-    if body.mode not in ("immediate", "review", "print_queue", "proxy"):
+    if body.mode not in ("immediate", "review", "print_queue", "proxy", "middleware"):
         return JSONResponse(status_code=400, content={"detail": "Invalid mode"})
 
     # Validate model
@@ -120,6 +126,13 @@ async def create_virtual_printer(
         if body.mode == "proxy":
             if not body.target_printer_id:
                 return JSONResponse(status_code=400, content={"detail": "Target printer is required for proxy mode"})
+        elif body.mode == "middleware":
+            if not body.access_code:
+                return JSONResponse(status_code=400, content={"detail": "Access code is required when enabling"})
+            if not body.serial_port:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Serial port is required for middleware mode"}
+                )
         else:
             if not body.access_code:
                 return JSONResponse(status_code=400, content={"detail": "Access code is required when enabling"})
@@ -171,6 +184,8 @@ async def create_virtual_printer(
         target_printer_id=body.target_printer_id,
         bind_ip=body.bind_ip,
         remote_interface_ip=body.remote_interface_ip,
+        serial_port=body.serial_port,
+        baudrate=body.baudrate,
         serial_suffix=new_suffix,
         position=next_pos,
     )
@@ -242,7 +257,7 @@ async def update_virtual_printer(
     if body.name is not None:
         vp.name = body.name
     if body.mode is not None:
-        if body.mode not in ("immediate", "review", "print_queue", "proxy"):
+        if body.mode not in ("immediate", "review", "print_queue", "proxy", "middleware"):
             return JSONResponse(status_code=400, content={"detail": "Invalid mode"})
         vp.mode = body.mode
     if body.model is not None:
@@ -269,6 +284,10 @@ async def update_virtual_printer(
         vp.bind_ip = body.bind_ip
     if body.remote_interface_ip is not None:
         vp.remote_interface_ip = body.remote_interface_ip
+    if body.serial_port is not None:
+        vp.serial_port = body.serial_port
+    if body.baudrate is not None:
+        vp.baudrate = body.baudrate
 
     # Determine final enabled state
     explicitly_enabling = body.enabled is True
@@ -306,6 +325,15 @@ async def update_virtual_printer(
             if not vp.target_printer_id:
                 logger.warning("Update VP %d rejected: no target_printer_id for proxy mode", vp_id)
                 return JSONResponse(status_code=400, content={"detail": "Target printer is required for proxy mode"})
+        elif effective_mode == "middleware":
+            if not vp.access_code:
+                logger.warning("Update VP %d rejected: no access_code for middleware mode", vp_id)
+                return JSONResponse(status_code=400, content={"detail": "Access code is required when enabling"})
+            if not vp.serial_port:
+                logger.warning("Update VP %d rejected: no serial_port for middleware mode", vp_id)
+                return JSONResponse(
+                    status_code=400, content={"detail": "Serial port is required for middleware mode"}
+                )
         else:
             if not vp.access_code:
                 logger.warning(
@@ -319,6 +347,9 @@ async def update_virtual_printer(
             new_enabled = False
         elif effective_mode == "proxy":
             if not vp.target_printer_id:
+                new_enabled = False
+        elif effective_mode == "middleware":
+            if not vp.access_code or not vp.serial_port:
                 new_enabled = False
         else:
             if not vp.access_code:

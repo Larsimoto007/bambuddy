@@ -585,73 +585,87 @@ class TestSpeedMapping:
 
 
 class TestManagerMiddlewareMode:
-    """Tests for VirtualPrinterManager middleware mode."""
+    """Tests for VirtualPrinterInstance middleware mode."""
 
     @pytest.fixture
-    def manager(self):
-        """Create a VirtualPrinterManager instance."""
-        from backend.app.services.virtual_printer.manager import VirtualPrinterManager
+    def instance(self, tmp_path):
+        """Create a VirtualPrinterInstance in middleware mode."""
+        from backend.app.services.virtual_printer.manager import VirtualPrinterInstance
 
-        return VirtualPrinterManager()
-
-    @pytest.mark.asyncio
-    async def test_configure_middleware_requires_access_code(self, manager):
-        """Verify middleware mode requires access code."""
-        with pytest.raises(ValueError, match="Access code is required"):
-            await manager.configure(enabled=True, mode="middleware", serial_port="/dev/ttyUSB0")
-
-    @pytest.mark.asyncio
-    async def test_configure_middleware_requires_serial_port(self, manager):
-        """Verify middleware mode requires serial port."""
-        manager._serial_port = ""  # Reset default
-
-        with pytest.raises(ValueError, match="Serial port is required"):
-            await manager.configure(
-                enabled=True,
-                mode="middleware",
-                access_code="12345678",
-                serial_port="",
-            )
-
-    @pytest.mark.asyncio
-    async def test_configure_middleware_sets_parameters(self, manager):
-        """Verify middleware parameters are stored correctly."""
-        manager._start = AsyncMock()
-
-        await manager.configure(
-            enabled=True,
-            access_code="12345678",
+        return VirtualPrinterInstance(
+            vp_id=1,
+            name="Test Middleware",
             mode="middleware",
-            serial_port="/dev/ttyACM0",
-            baudrate=250000,
+            model="3DPrinter-X1-Carbon",
+            access_code="12345678",
+            serial_suffix="391800001",
+            serial_port="/dev/ttyUSB0",
+            baudrate=115200,
+            base_dir=tmp_path,
         )
 
-        assert manager._mode == "middleware"
-        assert manager._serial_port == "/dev/ttyACM0"
-        assert manager._baudrate == 250000
+    def test_instance_is_middleware(self, instance):
+        """Verify is_middleware property returns True."""
+        assert instance.is_middleware is True
+        assert instance.is_proxy is False
 
-    def test_get_status_middleware_mode(self, manager):
-        """Verify status includes middleware info."""
-        manager._enabled = True
-        manager._mode = "middleware"
-        manager._serial_port = "/dev/ttyUSB0"
-        manager._baudrate = 115200
-        manager._tasks = [MagicMock(done=MagicMock(return_value=False))]
+    def test_instance_stores_serial_port(self, instance):
+        """Verify serial_port is stored."""
+        assert instance.serial_port == "/dev/ttyUSB0"
 
-        status = manager.get_status()
+    def test_instance_stores_baudrate(self, instance):
+        """Verify baudrate is stored."""
+        assert instance.baudrate == 115200
 
-        assert status["mode"] == "middleware"
-        assert status["serial_port"] == "/dev/ttyUSB0"
-        assert status["baudrate"] == 115200
+    def test_instance_custom_baudrate(self, tmp_path):
+        """Verify custom baudrate is stored."""
+        from backend.app.services.virtual_printer.manager import VirtualPrinterInstance
+
+        inst = VirtualPrinterInstance(
+            vp_id=2,
+            name="Custom Baud",
+            mode="middleware",
+            model="3DPrinter-X1-Carbon",
+            access_code="12345678",
+            serial_suffix="391800002",
+            serial_port="/dev/ttyACM0",
+            baudrate=250000,
+            base_dir=tmp_path,
+        )
+        assert inst.baudrate == 250000
+        assert inst.serial_port == "/dev/ttyACM0"
+
+    def test_get_status_middleware_running(self, instance):
+        """Verify status includes middleware info when middleware is set."""
+        mock_middleware = MagicMock()
+        mock_middleware.get_status.return_value = {
+            "connected": True,
+            "serial_port": "/dev/ttyUSB0",
+            "baudrate": 115200,
+            "firmware": "Marlin",
+            "gcode_state": "IDLE",
+            "current_file": "",
+            "progress": 0,
+            "layer_num": 0,
+            "total_layers": 0,
+            "nozzle_temp": 25.0,
+            "bed_temp": 25.0,
+        }
+        instance._middleware = mock_middleware
+        instance._tasks = [MagicMock(done=MagicMock(return_value=False))]
+
+        status = instance.get_status()
+
+        assert "middleware" in status
+        assert status["middleware"]["connected"] is True
 
     @pytest.mark.asyncio
-    async def test_on_print_command_forwards_to_middleware(self, manager):
-        """Verify print commands are forwarded to middleware in middleware mode."""
-        manager._mode = "middleware"
+    async def test_on_middleware_mqtt_command_forwards(self, instance):
+        """Verify MQTT commands are forwarded to middleware."""
         mock_middleware = MagicMock()
         mock_middleware.handle_mqtt_command = AsyncMock()
-        manager._middleware = mock_middleware
+        instance._middleware = mock_middleware
 
-        await manager._on_print_command("test.3mf", {"command": "pause"})
+        await instance._on_middleware_mqtt_command({"print": {"command": "pause"}})
 
         mock_middleware.handle_mqtt_command.assert_called_once_with({"print": {"command": "pause"}})

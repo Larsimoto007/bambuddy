@@ -1318,6 +1318,16 @@ async def run_migrations(conn):
     except OperationalError:
         pass  # Already applied
 
+    # Migration: Add serial_port and baudrate columns to virtual_printers for middleware mode
+    try:
+        await conn.execute(text("ALTER TABLE virtual_printers ADD COLUMN serial_port VARCHAR(100)"))
+    except OperationalError:
+        pass  # Already applied
+    try:
+        await conn.execute(text("ALTER TABLE virtual_printers ADD COLUMN baudrate INTEGER"))
+    except OperationalError:
+        pass  # Already applied
+
 
 async def seed_notification_templates():
     """Seed default notification templates if they don't exist."""
