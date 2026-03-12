@@ -1,5 +1,12 @@
 """Virtual Printer Manager - coordinates SSDP, MQTT, and FTP services.
 
+Supports multiple modes:
+- immediate: Archive uploads immediately
+- review: Queue uploads for user review before archiving
+- print_queue: Archive and add to print queue (unassigned)
+- proxy: Transparent TCP proxy to a real printer (for remote slicer access)
+- middleware: Bridge to a physical G-code printer via USB/serial cable
+
 Each virtual printer runs its own independent services (FTP, MQTT, SSDP, Bind)
 bound to its dedicated IP address, regardless of mode.
 """
@@ -14,6 +21,7 @@ from backend.app.core.config import settings as app_settings
 from backend.app.services.virtual_printer.bind_server import BindServer
 from backend.app.services.virtual_printer.certificate import CertificateService
 from backend.app.services.virtual_printer.ftp_server import VirtualPrinterFTPServer
+from backend.app.services.virtual_printer.gcode_middleware import GCodeMiddleware
 from backend.app.services.virtual_printer.mqtt_server import SimpleMQTTServer
 from backend.app.services.virtual_printer.ssdp_server import SSDPProxy, VirtualPrinterSSDPServer
 from backend.app.services.virtual_printer.tcp_proxy import SlicerProxyManager
@@ -104,6 +112,8 @@ class VirtualPrinterInstance:
         target_printer_id: int | None = None,
         bind_ip: str = "",
         remote_interface_ip: str = "",
+        serial_port: str = "",
+        baudrate: int = 115200,
         base_dir: Path,
         session_factory: Callable | None = None,
     ):
@@ -118,6 +128,8 @@ class VirtualPrinterInstance:
         self.target_printer_id = target_printer_id
         self.bind_ip = bind_ip
         self.remote_interface_ip = remote_interface_ip
+        self.serial_port = serial_port
+        self.baudrate = baudrate
         self._session_factory = session_factory
 
         # Directories
@@ -147,6 +159,13 @@ class VirtualPrinterInstance:
         self._bind: BindServer | None = None
         self._ssdp: VirtualPrinterSSDPServer | None = None
         self._ssdp_proxy: SSDPProxy | None = None
+        self._ftp: VirtualPrinterFTPServer | None = None
+        self._mqtt: SimpleMQTTServer | None = None
+        self._bind: BindServer | None = None  # For server mode (bind/detect on port 3000)
+        self._proxy: SlicerProxyManager | None = None  # For proxy mode
+        self._middleware: GCodeMiddleware | None = None  # For middleware mode
+
+        # Background tasks
         self._tasks: list[asyncio.Task] = []
 
     @property
@@ -167,7 +186,12 @@ class VirtualPrinterInstance:
         return self.mode == "proxy"
 
     @property
+    def is_middleware(self) -> bool:
+        return self.mode == "middleware"
+
+    @property
     def is_running(self) -> bool:
+        """Check if virtual printer services are running."""
         return len(self._tasks) > 0 and all(not t.done() for t in self._tasks)
 
     def generate_certificates(self) -> tuple[Path, Path]:
@@ -188,20 +212,24 @@ class VirtualPrinterInstance:
 
         self._pending_files[file_path.name] = file_path
 
-        if self.mode == "immediate":
+        if self.mode == "middleware":
+            # Middleware mode: file stays in upload dir for the middleware to process
+            logger.info("[VP %s] File ready for middleware: %s", self.name, file_path.name)
+        elif self.mode == "immediate":
             await self._archive_file(file_path, source_ip)
         elif self.mode == "print_queue":
             await self._add_to_print_queue(file_path, source_ip)
         else:
             await self._queue_file(file_path, source_ip)
 
-        # Reset MQTT status back to IDLE
-        if self._mqtt and file_path.suffix.lower() == ".3mf":
+        # Reset MQTT status back to IDLE (not for middleware — it manages its own state)
+        if self._mqtt and file_path.suffix.lower() == ".3mf" and self.mode != "middleware":
             self._mqtt.set_gcode_state("IDLE")
 
     async def on_print_command(self, filename: str, data: dict) -> None:
         """Handle print command from MQTT."""
         logger.info("[VP %s] Print command for: %s", self.name, filename)
+        # Middleware mode: forwarded via on_mqtt_command callback (set on MQTT server)
 
     async def _archive_file(self, file_path: Path, source_ip: str) -> None:
         """Archive file immediately."""
@@ -437,6 +465,9 @@ class VirtualPrinterInstance:
 
     async def stop_server(self) -> None:
         """Stop server-mode services."""
+        if self._middleware:
+            await self._middleware.stop()
+            self._middleware = None
         if self._ftp:
             await self._ftp.stop()
             self._ftp = None
@@ -450,6 +481,49 @@ class VirtualPrinterInstance:
             await self._ssdp.stop()
             self._ssdp = None
         await self._cancel_tasks()
+
+    async def start_middleware(self) -> None:
+        """Start middleware mode: server services + G-code bridge to physical printer."""
+        logger.info(
+            "[VP %s] Starting middleware mode (serial=%s, baud=%d)",
+            self.name,
+            self.serial_port,
+            self.baudrate,
+        )
+
+        # Start standard server services (FTP, MQTT, SSDP, Bind)
+        await self.start_server()
+
+        # Create and start the G-code middleware
+        self._middleware = GCodeMiddleware(
+            serial_port=self.serial_port,
+            baudrate=self.baudrate,
+            upload_dir=self.upload_dir,
+        )
+        connected = await self._middleware.start()
+        if not connected:
+            logger.warning(
+                "[VP %s] Could not connect to printer on %s — middleware services running, "
+                "printer can be connected later",
+                self.name,
+                self.serial_port,
+            )
+
+        # Wire MQTT to use real printer data for status reports
+        if self._mqtt:
+            self._mqtt.set_status_provider(self._middleware.get_bambu_status)
+            self._mqtt.on_mqtt_command = self._on_middleware_mqtt_command
+
+        logger.info("[VP %s] Middleware mode started", self.name)
+
+    async def _on_middleware_mqtt_command(self, data: dict) -> None:
+        """Forward MQTT commands to the G-code middleware for translation."""
+        if self._middleware:
+            await self._middleware.handle_mqtt_command(data)
+
+    async def stop_middleware(self) -> None:
+        """Stop middleware mode services."""
+        await self.stop_server()
 
     async def start_proxy(self) -> None:
         """Start proxy mode services for this instance."""
@@ -551,6 +625,8 @@ class VirtualPrinterInstance:
         }
         if self.is_proxy and self._proxy:
             status["proxy"] = self._proxy.get_status()
+        if self.is_middleware and self._middleware:
+            status["middleware"] = self._middleware.get_status()
         return status
 
 
@@ -654,6 +730,25 @@ class VirtualPrinterManager:
                 self._instances[vp.id] = instance
                 await instance.start_proxy()
                 logger.info("Started proxy VP: %s → %s", instance.name, target_ip)
+            elif vp.mode == "middleware":
+                instance = VirtualPrinterInstance(
+                    vp_id=vp.id,
+                    name=vp.name,
+                    mode=vp.mode,
+                    model=vp.model or DEFAULT_VIRTUAL_PRINTER_MODEL,
+                    access_code=vp.access_code or "",
+                    serial_suffix=vp.serial_suffix,
+                    target_printer_id=vp.target_printer_id,
+                    bind_ip=vp.bind_ip or "",
+                    remote_interface_ip=vp.remote_interface_ip or "",
+                    serial_port=vp.serial_port or "/dev/ttyUSB0",
+                    baudrate=vp.baudrate or 115200,
+                    base_dir=self._base_dir,
+                    session_factory=self._session_factory,
+                )
+                self._instances[vp.id] = instance
+                await instance.start_middleware()
+                logger.info("Started middleware VP: %s on %s", instance.name, vp.bind_ip)
             else:
                 instance = VirtualPrinterInstance(
                     vp_id=vp.id,
@@ -678,6 +773,8 @@ class VirtualPrinterManager:
         if instance:
             if instance.is_proxy:
                 await instance.stop_proxy()
+            elif instance.is_middleware:
+                await instance.stop_middleware()
             else:
                 await instance.stop_server()
             logger.info("Removed VP instance: %s", instance.name)
